@@ -7,10 +7,13 @@
 #include "time.h"
 #include <DHT.h>
 
-#ifndef STASSID
-#define STASSID "TheTaxCollector"
-#define STAPSK  "thereisnospoon"
+#ifndef APSSID
+#define APSSID "NodeMCU"
+#define APPSK  "thereisnospoon"
 #endif
+
+#define sensorPower D0
+#define sensorPin A0
 
 #define DHTTYPE DHT22
 
@@ -18,13 +21,15 @@
  * Light Terminal D7
  * Heat terminal D8
  * DHT22 terminal D6
- * Motor 1 terminals D4 & D3
- * Motor 2 terminals D2 & D1
+ * RainPower terminal D0
+ * RainSensor Reading A0
+ * Door terminals D1 & D2
+ * Windows terminals D3 & D4
  */
 
-// Set these to your desired credentials
-const char *ssid = STASSID;
-const char *password = STAPSK;
+/* Set these to your desired credentials. */
+const char *ssid = APSSID;
+const char *password = APPSK;
 
 ESP8266WebServer server(80);
 
@@ -62,10 +67,10 @@ float t;
 float h;
 
 //Motor control terminals
-int in1 = D4;
-int in2 = D3;
-int in3 = D2;
-int in4 = D1;
+int in1 = D1;
+int in2 = D2;
+int in3 = D3;
+int in4 = D4;
 
 //Door and Window variables
  bool DoorOpen ;
@@ -84,15 +89,13 @@ String ptr;
 void setup()
 {
  // NodeMCU Connection and OTA Setup
- Serial.begin(115200);
+  Serial.begin(115200);
   Serial.println("Booting");
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
-  while (WiFi.waitForConnectResult() != WL_CONNECTED) {
-    Serial.println("Connection Failed! Rebooting...");
-    delay(5000);
-    ESP.restart();
-  }
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(ssid, password);
+  IPAddress myIP = WiFi.softAPIP();
+  Serial.print("AP IP address: ");
+  Serial.println(myIP);
   delay(500);
 
 // Initialize a NTPClient to get time
@@ -135,7 +138,12 @@ void setup()
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
 
-  //Actual Code
+//RainSensor Initializaiton
+  pinMode(sensorPower, OUTPUT);
+  // Initially keep the sensor OFF
+  digitalWrite(sensorPower, LOW);
+
+  //DHT Initialization
   dht.begin();
 
   //Define pins
@@ -232,19 +240,42 @@ void loop()
 
   Serial.println("");
   delay(1000);
-
-  
- 
   
   server.handleClient();
 
+  //get the reading from the function below and print it
+  int rainStatus = readSensor();
+  Serial.print("Analog Output: ");
+  Serial.println(rainStatus);
+
+  // Determine status of rain
+  if (rainStatus > 600) {
+    Serial.println("Status: Clear");
+    WindowOpen  = HIGH;
+    WindowClose = LOW;
+    WindowOpen  = HIGH;
+    WindowClose = LOW;
+    
+  } else {
+    Serial.println("Status: It's raining");
+    WindowOpen  = LOW;
+    WindowClose = HIGH;
+    WindowOpen  = LOW;
+    WindowClose = HIGH;
+  }
+
+//Temperature Declaration
   t = dht.readTemperature();
   h = dht.readHumidity();
 
  //Automatically turning on Light
-  if (Sw==1 && S>50 && S<60)
+  if (Sw==0 && S>30 && S<=60)
   {
-    lightstatus == 1;
+    lightstatus = 1;
+  }
+  else if(Sw==0 && S<=30)
+  {
+    lightstatus =0;
   }
   
 //Light and heating
@@ -270,13 +301,13 @@ void loop()
  if (i==0 && DoorClose == 1)
  {
   CloseDoor();
-  delay(3000);
+  delay(5000);
   stopDoor();
  }
  else if(j == 0 && DoorOpen == 1)
  {
   OpenDoor();
-  delay(3000);
+  delay(5000);
   stopDoor();
  }
  
@@ -284,19 +315,27 @@ void loop()
   if (k==0 && WindowClose == 1)
  {
   CloseWindow();
-  delay(3000);
+  delay(5000);
   stopWindow();
  }
  else if(l == 0 && WindowOpen == 1)
  {
   OpenWindow();
-  delay(3000);
+  delay(5000);
   stopWindow();
  }
-
 }
 
  //Defining Functions
+ int readSensor()
+ {
+  digitalWrite(sensorPower, HIGH);         // Turn the sensor ON
+  delay(10);                               // Allow power to settle
+  int rainStatus = analogRead(sensorPin); // Read the sensor output
+  digitalWrite(sensorPower, LOW);         // Turn the sensor OFF
+  return rainStatus;                      // Return the value
+ }
+
   void CloseDoor()
  {
   digitalWrite(in1, HIGH);
@@ -379,7 +418,7 @@ void loop()
   void handle_ManualMode()
   {
    t ;  h ; H ; M ; S; Y; Mo; D; Da;
-   Sw = LOW;
+   Sw = HIGH;
    lightstatus; heatstatus; DoorOpen ; DoorClose; WindowOpen; WindowClose; 
    server.send(200, "text/html", SendHTML(t, h, H, M, S, Y, Mo, D, Da, Sw, lightstatus, heatstatus, DoorOpen, DoorClose, WindowClose, WindowOpen));
   }
@@ -387,7 +426,7 @@ void loop()
   void handle_AutoMode()
   {
    t ;  h ; H ; M ; S; Y; Mo; D; Da;
-   Sw = HIGH;
+   Sw = LOW;
    lightstatus; heatstatus; DoorOpen ; DoorClose; WindowOpen; WindowClose; 
    server.send(200, "text/html", SendHTML(t, h, H, M, S, Y, Mo, D, Da, Sw, lightstatus, heatstatus, DoorOpen, DoorClose, WindowClose, WindowOpen));
   }
@@ -499,11 +538,11 @@ void loop()
 //Switch from Manual to Automatic
    if(Sw)
   {
-    ptr += "<p>Control Mode: Automatic</p><a class=\"button button-off\" href=\"/Manual\">Switch Mode</a>\n";
+    ptr += "<p>Control Mode: Manual</p><a class=\"button button-off\" href=\"/Automatic\">Switch Mode</a>\n";
   }
  else
   {
-   ptr += "<p>Control Mode: Manual</p><a class=\"button button-on\" href=\"/Automatic\">Switch Mode</a>\n";
+   ptr += "<p>Control Mode: Automatic</p><a class=\"button button-on\" href=\"/Manual\">Switch Mode</a>\n";
   }
 
    ptr +="<div class=\"data\">\n";
